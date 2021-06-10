@@ -112,6 +112,7 @@ def make_frames(file_pattern, frame_duration, roi_img, downsample):
         argfilter = (event_time_offset > shutter_open_counts) & (event_time_offset < shutter_close_counts)
         event_id = event_id[argfilter]
         frame_number = frame_number[argfilter]
+        print(fname)
         make_hist(frames, event_id, frame_number, roi_img, downsample)
     return frames
 
@@ -126,7 +127,7 @@ def make_img(frame):
 
 
 @njit
-def denominator(frames, roi_img, npixels):
+def g2_denominator(frames, roi_img, npixels):
     nq = len(npixels)
     values = np.zeros(nq)
     for t in range(len(frames)):
@@ -140,7 +141,7 @@ def denominator(frames, roi_img, npixels):
     return values**2
 
 @njit
-def nominator(frames, roi_img, tau, npixels):
+def g2_nominator(frames, roi_img, tau, npixels):
     correlation = np.zeros(len(npixels))
     nt = len(frames) - tau
     for t in range(len(frames)-tau):
@@ -156,10 +157,30 @@ def nominator(frames, roi_img, tau, npixels):
 def calc_g2(frames, roi_img, delays):
     _, npixels = np.unique(roi_img, return_counts=True)
     npixels = npixels[1:]
-    den = denominator(frames, roi_img, npixels)
+    den = g2_denominator(frames, roi_img, npixels)
     res = []
     for tau in delays:
-        res.append(nominator(frames, roi_img, tau, npixels) / den)
+        res.append(g2_nominator(frames, roi_img, tau, npixels) / den)
     return np.array(res)
 
 
+if __name__ == '__main__':
+    # example usage
+    path = './'
+    scan = 7563 # hematite
+    #scan = 7556 # SiO2
+    downsample, dt = 5, 1e-3
+    q_offset, q_width, q_number = 100//downsample, 10//downsample, 5
+
+    # loading
+    q_bins = [(q_offset+q_width*i, q_offset+q_width*(i+1)) for i in range(q_number)]
+    mask = make_mask()
+    center_x, center_y = 1069.5, 201.5
+    roi_img = make_roi(center_x, center_y, q_bins, downsample)
+    frames = make_frames(path+'tristan-%04u*'%scan, dt, roi_img, downsample)
+
+    # g2 calculation
+    delays = (np.logspace(np.log10(dt), 1, 50) / dt).astype(int)
+    g2 = calc_g2(frames, roi_img, delays)
+    import matplotlib.pyplot as plt; plt.ion()
+    plt.plot(np.log10(delays*dt), g2-1)

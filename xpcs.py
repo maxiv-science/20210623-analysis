@@ -154,6 +154,77 @@ def g2_nominator(frames, roi_img, tau, npixels):
                 correlation[qbin] += v1 * f2[k]
     return correlation / nt / npixels
 
+@njit
+def ttc_inner_prod(frames, roi_img, npixels):
+    """
+    The product (I_{t1} * I_{t2}) averaged over all pixels in each q-bin.
+    
+    Returns an array (qbin, t1, t2)
+    """
+    qbins = np.unique(roi_img)[1:]
+    shape = (len(qbins), len(frames), len(frames))
+    result = np.zeros(shape, dtype=np.float32)
+    for t1 in range(len(frames)):
+        for t2 in range(t1+1):
+            for k1, v1 in frames[t1].items():
+                if k1 in frames[t2]:
+                    x = (k1 >> 13) & 0x1FFF
+                    y = k1 & 0x1FFF 
+                    q = roi_img[y, x] - 1
+                    result[q, t1, t2] += v1 * frames[t2][k1]
+                    if not t1 == t2:
+                        result[q, t2, t1] += v1 * frames[t2][k1]
+    result[:] = result / npixels.reshape((len(qbins), 1, 1))
+    return result
+
+@njit
+def ttc_Iav(frames, roi_img, npixels, square=False):
+    """
+    The array I_{t} or I_{t}**2 averaged over all pixels in each q-bin
+    
+    Returns an array (qbin, t)
+    """
+    qbins = np.unique(roi_img)[1:]
+    shape = (len(qbins), len(frames))
+    result = np.zeros(shape, dtype=np.float32)
+    for t in range(len(frames)):
+        for k, v in frames[t].items():
+            x = (k >> 13) & 0x1FFF
+            y = k & 0x1FFF 
+            q = roi_img[y, x] - 1
+            if square:
+                result[q, t] += v**2
+            else:
+                result[q, t] += v
+    result[:] = result / npixels.reshape((len(qbins), 1))
+    return result
+
+def calc_ttc(frames, roi_img):
+    """
+    According to Oier Bikondoa, the TTC is:
+
+               <I_{t1} * I_{t2}> - <I_{t1}><I_{t2}>
+    --------------------------------------------------------------
+    sqrt[ <I_{t1}**2> - <I_{t1}>**2) (<I_{t2}**2> - <I_{t2}>**2) ]
+
+    where <> is the average over all pixels in a q-bin.
+    """    
+    _, npixels = np.unique(roi_img, return_counts=True)
+    npixels = npixels[1:]
+
+    # do the heavy work:
+    crossterm = ttc_inner_prod(frames, roi_img, npixels)
+    Iav = ttc_Iav(frames, roi_img, npixels)
+    I2av = ttc_Iav(frames, roi_img, npixels, square=True)
+
+    # reshape to represent (t1, t2) - they're symmetric
+    nq = Iav.shape[0]
+    nt = Iav.shape[1]
+    nominator = crossterm - Iav.reshape((nq,nt,1))*Iav.reshape((nq,1,nt))
+    root = np.sqrt(I2av - Iav**2)
+    denominator = root.reshape((nq,nt,1)) * root.reshape((nq,1,nt))
+    return nominator / denominator
+
 def calc_g2(frames, roi_img, delays):
     _, npixels = np.unique(roi_img, return_counts=True)
     npixels = npixels[1:]
@@ -184,3 +255,11 @@ if __name__ == '__main__':
     g2 = calc_g2(frames, roi_img, delays)
     import matplotlib.pyplot as plt; plt.ion()
     plt.plot(np.log10(delays*dt), g2-1)
+
+    # ttc calculation and plot
+    ttc = calc_ttc(frames[:1000], roi_img)
+    plt.figure()
+    plt.imshow(ttc[0])
+    plt.title('scan %u, downsampling x %u'%(scan,downsample))
+    plt.xlabel('time with dt = %.1e'%dt)
+    plt.colorbar()

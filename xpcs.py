@@ -26,10 +26,10 @@ def make_hist(frames, values, frame_number, roi_img, downsample):
             continue
         frame = frames[frame_number[i]]
         if v in frame:
-            frame[v] += 1
+            frame[v] += 1 
         else:
-            frame[v] = 1
-
+            frame[v] = 1 
+            
             
 def make_mask():
     #256*256 3*3 pixels in the gap mask 5*5
@@ -46,6 +46,7 @@ def make_mask():
 
     # beamstop
     mask[:276, 1010:1120] = 1
+    mask[:290, 1010:1120] = 1 # S: modified
 
     # beam streaks
     mask[150:250, :] = 1
@@ -112,7 +113,7 @@ def make_frames(file_pattern, frame_duration, roi_img, downsample):
         argfilter = (event_time_offset > shutter_open_counts) & (event_time_offset < shutter_close_counts)
         event_id = event_id[argfilter]
         frame_number = frame_number[argfilter]
-        print(fname)
+        #print(fname)
         make_hist(frames, event_id, frame_number, roi_img, downsample)
     return frames
 
@@ -124,7 +125,6 @@ def make_img(frame):
         y = k & 0x1FFF 
         img[y, x] = v
     return img
-
 
 @njit
 def g2_denominator(frames, roi_img, npixels):
@@ -141,12 +141,12 @@ def g2_denominator(frames, roi_img, npixels):
     return values**2
 
 @njit
-def g2_nominator(frames, roi_img, tau, npixels):
+def g2_nominator(frames, roi_img, tau, npixels): #, square=False):
     correlation = np.zeros(len(npixels))
-    nt = len(frames) - tau
-    for t in range(len(frames)-tau):
+    nt = len(frames) - tau           # no of initial times (frames) t0
+    for t in range(len(frames)-tau): # summing over initial times (frames) t0
         f2 = frames[t+tau]
-        for k, v1 in frames[t].items():
+        for k, v1 in frames[t].items(): # summing over pixels 
             if k in f2:
                 x = (k >> 13) & 0x1FFF
                 y = k & 0x1FFF 
@@ -171,9 +171,9 @@ def ttc_inner_prod(frames, roi_img, npixels):
                     x = (k1 >> 13) & 0x1FFF
                     y = k1 & 0x1FFF 
                     q = roi_img[y, x] - 1
-                    result[q, t1, t2] += v1 * frames[t2][k1]
+                    result[q, t1, t2] += v1 * frames[t2][k1] # one triangle of the ttc
                     if not t1 == t2:
-                        result[q, t2, t1] += v1 * frames[t2][k1]
+                        result[q, t2, t1] += v1 * frames[t2][k1] # other triangle of the tcc
     result[:] = result / npixels.reshape((len(qbins), 1, 1))
     return result
 
@@ -201,11 +201,11 @@ def ttc_Iav(frames, roi_img, npixels, square=False):
 
 def calc_ttc(frames, roi_img):
     """
-    According to Oier Bikondoa, the TTC is:
-
-               <I_{t1} * I_{t2}> - <I_{t1}><I_{t2}>
-    --------------------------------------------------------------
-    sqrt[ <I_{t1}**2> - <I_{t1}>**2) (<I_{t2}**2> - <I_{t2}>**2) ]
+    according to Perakis and Gutt, PCCP, 2020: 
+    
+    <I_{t1} * I_{t2}>
+  ----------------------
+    <I_{t1}><I_{t2}>
 
     where <> is the average over all pixels in a q-bin.
     """    
@@ -220,9 +220,8 @@ def calc_ttc(frames, roi_img):
     # reshape to represent (t1, t2) - they're symmetric
     nq = Iav.shape[0]
     nt = Iav.shape[1]
-    nominator = crossterm - Iav.reshape((nq,nt,1))*Iav.reshape((nq,1,nt))
-    root = np.sqrt(I2av - Iav**2)
-    denominator = root.reshape((nq,nt,1)) * root.reshape((nq,1,nt))
+    nominator = crossterm 
+    denominator = Iav.reshape((nq,nt,1))*Iav.reshape((nq,1,nt))
     return nominator / denominator
 
 def calc_g2(frames, roi_img, delays):
@@ -239,7 +238,6 @@ if __name__ == '__main__':
     # example usage
     path = './'
     scan = 7563 # hematite
-    #scan = 7556 # SiO2
     downsample, dt = 5, 1e-3
     q_offset, q_width, q_number = 100//downsample, 10//downsample, 5
 
